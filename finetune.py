@@ -1,11 +1,12 @@
 import os
 import sys
 from typing import List
-
+import random
 import fire
 import torch
 import transformers
 from datasets import load_dataset
+from utils.preprocess_webnlg import preprocess_webnlg
 
 """
 Unused imports:
@@ -28,7 +29,6 @@ from utils.prompter import Prompter
 def train(
     # model/data params
     base_model: str = "",  # the only required argument
-    data_path: str = "yahma/alpaca-cleaned",
     output_dir: str = "./lora-alpaca",
     # training hyperparams
     batch_size: int = 128,
@@ -52,8 +52,8 @@ def train(
     # wandb params
     wandb_project: str = "",
     wandb_run_name: str = "",
-    wandb_watch: str = "",  # options: false | gradients | all
-    wandb_log_model: str = "",  # options: false | true
+    wandb_watch: str = "all",  # options: false | gradients | all
+    wandb_log_model: str = "true",  # options: false | true
     resume_from_checkpoint: str = None,  # either training checkpoint or final adapter
     prompt_template_name: str = "alpaca",  # The prompt template to use, will default to alpaca.
 ):
@@ -61,7 +61,6 @@ def train(
         print(
             f"Training Alpaca-LoRA model with params:\n"
             f"base_model: {base_model}\n"
-            f"data_path: {data_path}\n"
             f"output_dir: {output_dir}\n"
             f"batch_size: {batch_size}\n"
             f"micro_batch_size: {micro_batch_size}\n"
@@ -183,10 +182,6 @@ def train(
     )
     model = get_peft_model(model, config)
 
-    if data_path.endswith(".json") or data_path.endswith(".jsonl"):
-        data = load_dataset("json", data_files=data_path)
-    else:
-        data = load_dataset(data_path)
 
     if resume_from_checkpoint:
         # Check the available weights and load them
@@ -210,19 +205,18 @@ def train(
 
     model.print_trainable_parameters()  # Be more transparent about the % of trainable params.
 
-    if val_set_size > 0:
-        train_val = data["train"].train_test_split(
-            test_size=val_set_size, shuffle=True, seed=42
-        )
-        train_data = (
-            train_val["train"].shuffle().map(generate_and_tokenize_prompt)
-        )
-        val_data = (
-            train_val["test"].shuffle().map(generate_and_tokenize_prompt)
-        )
-    else:
-        train_data = data["train"].shuffle().map(generate_and_tokenize_prompt)
-        val_data = None
+
+    dataset_base_path="webnlg-dataset-master/"
+    dataset_version_path="release_v2.1/json/"
+    train=preprocess_webnlg(dataset_base_path+dataset_version_path+"webnlg_release_v2.1_train.json")
+    val=preprocess_webnlg(dataset_base_path+dataset_version_path+"webnlg_release_v2.1_dev.json")
+    
+    train_data=list(map(lambda x: generate_and_tokenize_prompt(x),train))
+    val_data=list(map(lambda x: generate_and_tokenize_prompt(x),val))
+    random.shuffle(train_data)
+    random.shuffle(val_data)
+    
+    print(train_data[0])
 
     if not ddp and torch.cuda.device_count() > 1:
         # keeps Trainer from trying its own DataParallelism when more than 1 gpu is available
